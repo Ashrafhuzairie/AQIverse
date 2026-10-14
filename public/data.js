@@ -43,7 +43,49 @@ const rows = [
   ['auckland','Auckland','New Zealand','NZ','Oceania',-36.8485,174.7633,12,18,72,'new-zealand/auckland'],
   ['ulaanbaatar','Ulaanbaatar','Mongolia','MN','Asia',47.9184,106.9177,313,7,43,'mongolia/ulaanbaatar']
 ];
-export const cities=rows.map((r,index)=>({id:r[0],name:r[1],country:r[2],code:r[3],region:r[4],lat:r[5],lon:r[6],baseAqi:r[7],baseTemp:r[8],baseHumidity:r[9],iqairPath:r[10],index}));
+const subdivisions={
+ singapore:'Singapore','johor-bahru':'Johor','kuala-lumpur':'Kuala Lumpur',jakarta:'Jakarta',bangkok:'Bangkok',hanoi:'Hanoi',manila:'Metro Manila',tokyo:'Tokyo',seoul:'Seoul',beijing:'Beijing',shanghai:'Shanghai',delhi:'Delhi',mumbai:'Maharashtra',dhaka:'Dhaka',lahore:'Punjab',kathmandu:'Bagmati',dubai:'Dubai',riyadh:'Riyadh',istanbul:'Istanbul',london:'England',paris:'Île-de-France',berlin:'Berlin',rome:'Lazio',madrid:'Community of Madrid',oslo:'Oslo',zurich:'Zürich',helsinki:'Uusimaa','new-york':'New York','los-angeles':'California',toronto:'Ontario','mexico-city':'Mexico City','sao-paulo':'São Paulo',santiago:'Santiago Metropolitan',cairo:'Cairo',lagos:'Lagos',nairobi:'Nairobi','cape-town':'Western Cape',sydney:'New South Wales',melbourne:'Victoria',auckland:'Auckland',ulaanbaatar:'Ulaanbaatar'
+};
+rows.forEach(row=>row.push(subdivisions[row[0]]||''));
+rows.push(
+ ['george-town','George Town','Malaysia','MY','Asia',5.4141,100.3288,52,30,76,'malaysia/penang/george-town','Penang'],
+ ['kuching','Kuching','Malaysia','MY','Asia',1.5535,110.3593,39,30,82,'malaysia/sarawak/kuching','Sarawak'],
+ ['surabaya','Surabaya','Indonesia','ID','Asia',-7.2575,112.7521,96,31,70,'indonesia/east-java/surabaya','East Java'],
+ ['ho-chi-minh-city','Ho Chi Minh City','Vietnam','VN','Asia',10.8231,106.6297,82,31,73,'vietnam/ho-chi-minh-city','Ho Chi Minh City'],
+ ['taipei','Taipei','Taiwan','TW','Asia',25.033,121.5654,48,25,72,'taiwan/taipei','Taipei'],
+ ['hong-kong','Hong Kong','China','HK','Asia',22.3193,114.1694,61,27,76,'china/hong-kong','Hong Kong'],
+ ['osaka','Osaka','Japan','JP','Asia',34.6937,135.5023,42,22,64,'japan/osaka','Osaka'],
+ ['bengaluru','Bengaluru','India','IN','Asia',12.9716,77.5946,91,27,58,'india/karnataka/bengaluru','Karnataka'],
+ ['chennai','Chennai','India','IN','Asia',13.0827,80.2707,104,31,70,'india/tamil-nadu/chennai','Tamil Nadu'],
+ ['kolkata','Kolkata','India','IN','Asia',22.5726,88.3639,144,30,72,'india/west-bengal/kolkata','West Bengal'],
+ ['karachi','Karachi','Pakistan','PK','Asia',24.8607,67.0011,153,31,65,'pakistan/sindh/karachi','Sindh'],
+ ['doha','Doha','Qatar','QA','Asia',25.2854,51.531,87,33,49,'qatar/doha','Doha'],
+ ['abu-dhabi','Abu Dhabi','United Arab Emirates','AE','Asia',24.4539,54.3773,78,34,51,'united-arab-emirates/abu-dhabi','Abu Dhabi'],
+ ['amsterdam','Amsterdam','Netherlands','NL','Europe',52.3676,4.9041,27,15,73,'netherlands/north-holland/amsterdam','North Holland'],
+ ['brussels','Brussels','Belgium','BE','Europe',50.8503,4.3517,35,15,72,'belgium/brussels-capital/brussels','Brussels-Capital'],
+ ['vienna','Vienna','Austria','AT','Europe',48.2082,16.3738,30,16,66,'austria/vienna','Vienna'],
+ ['prague','Prague','Czechia','CZ','Europe',50.0755,14.4378,38,15,65,'czech-republic/prague','Prague'],
+ ['warsaw','Warsaw','Poland','PL','Europe',52.2297,21.0122,45,14,67,'poland/masovian-voivodeship/warsaw','Masovian'],
+ ['lisbon','Lisbon','Portugal','PT','Europe',38.7223,-9.1393,32,21,65,'portugal/lisbon','Lisbon'],
+ ['athens','Athens','Greece','GR','Europe',37.9838,23.7275,56,24,54,'greece/attica/athens','Attica'],
+ ['stockholm','Stockholm','Sweden','SE','Europe',59.3293,18.0686,17,11,68,'sweden/stockholm','Stockholm'],
+ ['chicago','Chicago','United States','US','Americas',41.8781,-87.6298,52,18,61,'usa/illinois/chicago','Illinois'],
+ ['houston','Houston','United States','US','Americas',29.7604,-95.3698,62,27,72,'usa/texas/houston','Texas'],
+ ['vancouver','Vancouver','Canada','CA','Americas',49.2827,-123.1207,24,14,72,'canada/british-columbia/vancouver','British Columbia'],
+ ['montreal','Montréal','Canada','CA','Americas',45.5019,-73.5674,31,15,66,'canada/quebec/montreal','Quebec'],
+ ['bogota','Bogotá','Colombia','CO','Americas',4.711,-74.0721,68,19,76,'colombia/bogota-dc/bogota','Bogotá D.C.'],
+ ['lima','Lima','Peru','PE','Americas',-12.0464,-77.0428,84,22,78,'peru/lima/lima','Lima'],
+ ['buenos-aires','Buenos Aires','Argentina','AR','Americas',-34.6037,-58.3816,41,22,67,'argentina/buenos-aires','Buenos Aires'],
+ ['rio-de-janeiro','Rio de Janeiro','Brazil','BR','Americas',-22.9068,-43.1729,55,27,73,'brazil/rio-de-janeiro','Rio de Janeiro'],
+ ['johannesburg','Johannesburg','South Africa','ZA','Africa',-26.2041,28.0473,72,20,49,'south-africa/gauteng/johannesburg','Gauteng'],
+ ['accra','Accra','Ghana','GH','Africa',5.6037,-0.187,96,29,81,'ghana/greater-accra/accra','Greater Accra'],
+ ['addis-ababa','Addis Ababa','Ethiopia','ET','Africa',8.9806,38.7578,89,20,58,'ethiopia/addis-ababa','Addis Ababa'],
+ ['casablanca','Casablanca','Morocco','MA','Africa',33.5731,-7.5898,69,23,70,'morocco/casablanca-settat/casablanca','Casablanca-Settat'],
+ ['brisbane','Brisbane','Australia','AU','Oceania',-27.4698,153.0251,21,24,66,'australia/queensland/brisbane','Queensland'],
+ ['perth','Perth','Australia','AU','Oceania',-31.9523,115.8613,18,24,56,'australia/western-australia/perth','Western Australia'],
+ ['wellington','Wellington','New Zealand','NZ','Oceania',-41.2866,174.7756,14,16,75,'new-zealand/wellington','Wellington']
+);
+export const cities=rows.map((r,index)=>({id:r[0],name:r[1],country:r[2],code:r[3],region:r[4],lat:r[5],lon:r[6],baseAqi:r[7],baseTemp:r[8],baseHumidity:r[9],iqairPath:r[10],subdivision:r[11],index}));
 export const categories=[
  {max:50,label:'Good',color:'#54e89b'},
  {max:100,label:'Moderate',color:'#ffd76d'},

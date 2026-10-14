@@ -3,7 +3,7 @@ const validIds=new Set(cities.map(c=>c.id));
 export const normalize=value=>String(value).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
 export function filterCities({query='',region='All',savedOnly=false,saved=[],sort='highest',hour=12}={}){
  const q=normalize(query),ids=new Set(saved);
- return cities.filter(c=>(region==='All'||c.region===region)&&(!savedOnly||ids.has(c.id))&&(!q||normalize(c.name+' '+c.country+' '+c.code).includes(q))).sort((a,b)=>{
+ return cities.filter(c=>(region==='All'||c.region===region)&&(!savedOnly||ids.has(c.id))&&(!q||normalize(c.name+' '+c.subdivision+' '+c.country+' '+c.code).includes(q))).sort((a,b)=>{
   if(sort==='name')return a.name.localeCompare(b.name);const x=reading(a,hour).aqi,y=reading(b,hour).aqi;
   if(!Number.isFinite(x)&&!Number.isFinite(y))return a.name.localeCompare(b.name);if(!Number.isFinite(x))return 1;if(!Number.isFinite(y))return -1;
   return sort==='lowest'?x-y:y-x;

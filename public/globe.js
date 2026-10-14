@@ -1,5 +1,6 @@
 import {cities,reading,geoVector,rotateVector,clamp,temperatureColor} from './data.js';
 const rad=d=>d*Math.PI/180;
+export const MIN_ZOOM=.65,MAX_ZOOM=10,CITY_DETAIL_ZOOM=2.75;
 
 const vertexShader=`
 attribute vec3 aPosition;
@@ -105,7 +106,8 @@ function makeWebGL(canvas,polygons){
   gl.uniform2f(uniforms.uScale,2*layout.r/layout.w,2*layout.r/layout.h);
   gl.uniform1f(uniforms.uHeat,state.heat?1:0);gl.uniform1f(uniforms.uGrid,state.grid?1:0);gl.uniform1f(uniforms.uTemperature,state.metric==='temp'?1:0);
   const points=new Float32Array(48*4);for(let i=0;i<48;i++){points[i*4+3]=-100;}
-  cities.forEach((c,i)=>{const v=geoVector(c.lat,c.lon),r=reading(c,state.hour),value=state.metric==='temp'?r.temp:state.metric==='pm'&&r.pm===null?null:r.aqi;if(Number.isFinite(value))points.set([...v,value],i*4);});gl.uniform4fv(uniforms['uCities[0]'],points);
+  const selected=cities.find(c=>c.id===state.selected),heatCities=[selected,...cities.filter(c=>c!==selected)].filter(Boolean).slice(0,48);
+  heatCities.forEach((c,i)=>{const v=geoVector(c.lat,c.lon),r=reading(c,state.hour),value=state.metric==='temp'?r.temp:state.metric==='pm'&&r.pm===null?null:r.aqi;if(Number.isFinite(value))points.set([...v,value],i*4);});gl.uniform4fv(uniforms['uCities[0]'],points);
   gl.drawElements(gl.TRIANGLES,indices.length,gl.UNSIGNED_SHORT,0);
  }};
 }
@@ -127,16 +129,18 @@ function makeCanvasFallback(canvas,polygons){
  }};
 }
 function drawProjectedLine(ctx,l,s,points){ctx.beginPath();let connected=false;for(const v of points){const p=rotateVector(v,s.lon,s.lat);if(p[2]>0){if(connected)ctx.lineTo(l.cx+p[0]*l.r,l.cy-p[1]*l.r);else ctx.moveTo(l.cx+p[0]*l.r,l.cy-p[1]*l.r);connected=true;}else connected=false;}ctx.stroke();}
+function projectedPath(l,s,lines){const path=new Path2D();for(const points of lines){let connected=false;for(const v of points){const p=rotateVector(v,s.lon,s.lat);if(p[2]>.015){const x=l.cx+p[0]*l.r,y=l.cy-p[1]*l.r;if(connected)path.lineTo(x,y);else path.moveTo(x,y);connected=true;}else connected=false;}}return path;}
+function vectorToGeo(vector){const length=Math.hypot(...vector)||1,x=vector[0]/length,y=vector[1]/length,z=vector[2]/length;return {lat:Math.asin(clamp(y,-1,1))*180/Math.PI,lon:Math.atan2(x,z)*180/Math.PI};}
 
 export class Globe {
- constructor({canvas,effects,markers,atmosphere,state,onRotate,onFrame}){
-  Object.assign(this,{canvas,effects,markers,atmosphere,state,onRotate,onFrame});this.ctx=effects.getContext('2d');this.layout={w:0,h:0,r:0,cx:0,cy:0};this.pointerMap=new Map();this.lastTime=0;this.dirty=true;this.reducedMotion=matchMedia('(prefers-reduced-motion: reduce)').matches;this.countries=[];this.markerBoxes=[];this.overlayBoxes=[];this.labelMeasurements=new Map();this.drawnCountryNames=[];
+ constructor({canvas,effects,markers,atmosphere,state,onRotate,onFrame,onZoom}){
+  Object.assign(this,{canvas,effects,markers,atmosphere,state,onRotate,onFrame,onZoom});this.ctx=effects.getContext('2d');this.layout={w:0,h:0,r:0,cx:0,cy:0};this.pointerMap=new Map();this.lastTime=0;this.dirty=true;this.active=true;this.reducedMotion=matchMedia('(prefers-reduced-motion: reduce)').matches;this.countries=[];this.adminPlaces=[];this.adminLines=[];this.clusterEls=[];this.markerBoxes=[];this.overlayBoxes=[];this.labelMeasurements=new Map();this.drawnCountryNames=[];
   this.pins=cities.map(c=>{const el=document.createElement('button');el.className='pin';el.type='button';el.hidden=true;el.dataset.city=c.id;el.setAttribute('aria-label',`Select ${c.name}`);el.innerHTML='<span class="pin-value"></span><span class="pin-label" hidden></span>';markers.append(el);return {city:c,el,value:el.firstElementChild,label:el.lastElementChild,vec:geoVector(c.lat,c.lon)};});
   let seed=28;this.particles=Array.from({length:95},()=>{seed=(seed*1664525+1013904223)>>>0;const a=seed/4294967296;seed=(seed*1664525+1013904223)>>>0;return {lon:a*360-180,lat:(seed/4294967296)*130-65,speed:1+a*3,length:2+a*5};});
-  this.bind();this.resizeObserver=new ResizeObserver(()=>{this.measure();this.dirty=true;});this.resizeObserver.observe(canvas.parentElement);this.measure();
+  this.bind();this.resizeObserver=new ResizeObserver(()=>{this.measure();this.dirty=true;});this.resizeObserver.observe(canvas.parentElement);this.measure();this.syncZoomUi();
  }
  async init(){
-  const responses=await Promise.all([fetch('./world.json'),fetch('./countries.json')]);if(responses.some(r=>!r.ok))throw new Error('World geography could not load');const [polygons,countries]=await Promise.all(responses.map(r=>r.json()));this.countries=countries.map(c=>({...c,vec:geoVector(c.lat,c.lon)}));
+  const responses=await Promise.all([fetch('./world.json'),fetch('./countries.json'),fetch('./admin1.json')]);if(responses.some(r=>!r.ok))throw new Error('World geography could not load');const [polygons,countries,admin]=await Promise.all(responses.map(r=>r.json()));this.countries=countries.map(c=>({...c,vec:geoVector(c.lat,c.lon)}));this.adminPlaces=admin.places.map(place=>({...place,vec:geoVector(place.lat,place.lon)}));this.adminLines=admin.lines.map(line=>line.map(([lon,lat])=>geoVector(lat,lon)));
   try{this.renderer=makeWebGL(this.canvas,polygons);}catch(error){
    // A canvas cannot change context types after WebGL has initialized. Replace it for the fallback.
    const replacement=this.canvas.cloneNode();this.canvas.replaceWith(replacement);this.canvas=replacement;this.bindCanvas();this.renderer=makeCanvasFallback(replacement,polygons);
@@ -145,24 +149,31 @@ export class Globe {
  }
  measure(){const stage=this.canvas.parentElement,rect=stage.getBoundingClientRect(),w=rect.width,h=rect.height,mobile=innerWidth<=760;let r,cx,cy;if(mobile){r=Math.min(w*.425,180);cx=w*.5;cy=278;}else{r=Math.min(h*.375,w*.345);cx=w*.415;cy=h*.51+15;}this.layout={w,h,r:r*this.state.zoom,cx,cy};this.atmosphere.style.cssText=`left:${cx}px;top:${cy}px;width:${this.layout.r*2.7}px;height:${this.layout.r*2.7}px;`;this.overlayBoxes=[...stage.querySelectorAll('.city-detail,.stage-intro,.stage-top-right,.legend,.layer-switches,.timeline,.map-tools')].map(el=>{const b=el.getBoundingClientRect();return {left:b.left-rect.left-5,right:b.right-rect.left+5,top:b.top-rect.top-5,bottom:b.bottom-rect.top+5};});}
  project(v,altitude=1){const p=rotateVector(v,this.state.lon,this.state.lat),l=this.layout;return {x:l.cx+p[0]*l.r*altitude,y:l.cy-p[1]*l.r*altitude,z:p[2]};}
- focus(city){this.state.rotating=false;let delta=((city.lon-this.state.lon+540)%360)-180;this.target={lon:this.state.lon+delta,lat:city.lat};this.dirty=true;}
- zoom(amount){this.state.zoom=clamp(this.state.zoom+amount,.65,2.2);this.measure();this.dirty=true;}
- reset(){this.target={lon:this.state.lon+((98-this.state.lon+540)%360)-180,lat:16};this.state.zoom=1;this.measure();this.dirty=true;}
+ focus(city){this.focusPlace(city,Math.max(this.state.zoom,CITY_DETAIL_ZOOM));}
+ focusPlace(place,zoom=CITY_DETAIL_ZOOM){this.state.rotating=false;this.focusedPlace=place;const delta=((place.lon-this.state.lon+540)%360)-180;this.target={lon:this.state.lon+delta,lat:clamp(place.lat,-80,80),zoom:clamp(zoom,MIN_ZOOM,MAX_ZOOM)};this.dirty=true;}
+ getSearchPlaces(){return [...this.countries.map(country=>({kind:'country',name:country.name,country:country.name,lat:country.lat,lon:country.lon,zoom:country.rank<=2?1.55:1.9})),...this.adminPlaces.map(place=>({kind:'subdivision',...place,zoom:Math.max(3.15,Math.min(3.8,place.minZoom+.55))}))];}
+ syncZoomUi(){this.markers.classList.toggle('detail-zoom',this.state.zoom>=2.3);this.onZoom?.(this.state.zoom);}
+ geographicAt(clientX,clientY){const rect=this.canvas.getBoundingClientRect(),x=(clientX-rect.left-this.layout.cx)/this.layout.r,y=(this.layout.cy-(clientY-rect.top))/this.layout.r,squared=x*x+y*y;if(squared>=1)return null;const z=Math.sqrt(1-squared),yaw=rad(this.state.lon),pitch=rad(this.state.lat),cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch),worldY=y*cp+z*sp,worldZ=-y*sp+z*cp,worldX=x*cy+worldZ*sy,finalZ=-x*sy+worldZ*cy;return vectorToGeo([worldX,worldY,finalZ]);}
+ zoom(amount,anchor){this.target=null;const old=this.state.zoom,next=clamp(old+amount,MIN_ZOOM,MAX_ZOOM),point=anchor?this.geographicAt(anchor.x,anchor.y):null;if(next===old){this.syncZoomUi();return;}if(point){const fraction=1-old/next,delta=((point.lon-this.state.lon+540)%360)-180;this.state.lon+=delta*fraction;this.state.lat=clamp(this.state.lat+(point.lat-this.state.lat)*fraction,-80,80);}this.state.zoom=next;this.measure();this.syncZoomUi();this.dirty=true;}
+ reset(){this.target={lon:this.state.lon+((98-this.state.lon+540)%360)-180,lat:16,zoom:1};this.dirty=true;}
  refresh(){this.dirty=true;}
+ setActive(active){this.active=Boolean(active);this.lastTime=0;this.dirty=true;}
  bind(){this.bindCanvas();document.addEventListener('visibilitychange',()=>{this.lastTime=0;this.dirty=true;});}
  bindCanvas(){const c=this.canvas;
-  c.addEventListener('pointerdown',e=>{if(e.pointerType==='mouse'&&e.button!==0)return;c.focus({preventScroll:true});c.setPointerCapture(e.pointerId);this.pointerMap.set(e.pointerId,{x:e.clientX,y:e.clientY});this.target=null;this.state.rotating=false;this.onRotate?.();c.classList.add('dragging');if(this.pointerMap.size===2)this.pinchDistance=this.getPinchDistance();});
-  c.addEventListener('pointermove',e=>{const previous=this.pointerMap.get(e.pointerId);if(!previous)return;this.pointerMap.set(e.pointerId,{x:e.clientX,y:e.clientY});if(this.pointerMap.size>=2){const distance=this.getPinchDistance();if(this.pinchDistance)this.zoom((distance-this.pinchDistance)/200);this.pinchDistance=distance;}else{this.state.lon-=(e.clientX-previous.x)*.3;this.state.lat=clamp(this.state.lat+(e.clientY-previous.y)*.3,-80,80);this.dirty=true;}});
-  const release=e=>{this.pointerMap.delete(e.pointerId);this.pinchDistance=null;if(!this.pointerMap.size)c.classList.remove('dragging');};c.addEventListener('pointerup',release);c.addEventListener('pointercancel',release);c.addEventListener('lostpointercapture',release);
-  c.addEventListener('wheel',e=>{e.preventDefault();this.zoom(-e.deltaY*.001);},{passive:false});
-  c.addEventListener('keydown',e=>{const keys=['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','+','=','-','0'];if(!keys.includes(e.key))return;e.preventDefault();this.target=null;this.state.rotating=false;this.onRotate?.();if(e.key==='ArrowLeft')this.state.lon-=8;if(e.key==='ArrowRight')this.state.lon+=8;if(e.key==='ArrowUp')this.state.lat=clamp(this.state.lat+8,-80,80);if(e.key==='ArrowDown')this.state.lat=clamp(this.state.lat-8,-80,80);if(e.key==='+'||e.key==='=')this.zoom(.15);if(e.key==='-')this.zoom(-.15);if(e.key==='0')this.reset();this.dirty=true;});
+  c.addEventListener('pointerdown',e=>{if(e.pointerType==='mouse'&&e.button!==0)return;c.focus({preventScroll:true});c.setPointerCapture(e.pointerId);this.pointerMap.set(e.pointerId,{x:e.clientX,y:e.clientY,startX:e.clientX,startY:e.clientY,type:e.pointerType});this.target=null;this.state.rotating=false;this.onRotate?.();c.classList.add('dragging');if(this.pointerMap.size===2){this.pinchDistance=this.getPinchDistance();this.didPinch=true;}});
+  c.addEventListener('pointermove',e=>{const previous=this.pointerMap.get(e.pointerId);if(!previous)return;this.pointerMap.set(e.pointerId,{...previous,x:e.clientX,y:e.clientY});if(this.pointerMap.size>=2){const distance=this.getPinchDistance();if(this.pinchDistance)this.zoom((distance-this.pinchDistance)/150,this.getPinchCentre());this.pinchDistance=distance;}else{this.state.lon-=(e.clientX-previous.x)*.3;this.state.lat=clamp(this.state.lat+(e.clientY-previous.y)*.3,-80,80);this.dirty=true;}});
+  const release=e=>{const point=this.pointerMap.get(e.pointerId);if(e.type==='pointerup'&&point?.type==='touch'&&!this.didPinch&&Math.hypot(point.x-point.startX,point.y-point.startY)<12){const now=performance.now(),tap={time:now,x:point.x,y:point.y};if(this.lastTouchTap&&now-this.lastTouchTap.time<360&&Math.hypot(tap.x-this.lastTouchTap.x,tap.y-this.lastTouchTap.y)<30){this.zoom(.75,{x:tap.x,y:tap.y});this.lastTouchTap=null;}else this.lastTouchTap=tap;}this.pointerMap.delete(e.pointerId);this.pinchDistance=null;if(!this.pointerMap.size){c.classList.remove('dragging');this.didPinch=false;}};c.addEventListener('pointerup',release);c.addEventListener('pointercancel',release);c.addEventListener('lostpointercapture',release);
+  c.addEventListener('wheel',e=>{e.preventDefault();this.zoom(-e.deltaY*.002,{x:e.clientX,y:e.clientY});},{passive:false});
+  c.addEventListener('dblclick',e=>{e.preventDefault();this.zoom(.75,{x:e.clientX,y:e.clientY});});
+  c.addEventListener('keydown',e=>{const keys=['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','+','=','-','0'];if(!keys.includes(e.key))return;e.preventDefault();this.target=null;this.state.rotating=false;this.onRotate?.();if(e.key==='ArrowLeft')this.state.lon-=8;if(e.key==='ArrowRight')this.state.lon+=8;if(e.key==='ArrowUp')this.state.lat=clamp(this.state.lat+8,-80,80);if(e.key==='ArrowDown')this.state.lat=clamp(this.state.lat-8,-80,80);if(e.key==='+'||e.key==='=')this.zoom(.3);if(e.key==='-')this.zoom(-.3);if(e.key==='0')this.reset();this.dirty=true;});
   c.addEventListener('webglcontextlost',e=>{e.preventDefault();const s=document.getElementById('canvas-status');s.hidden=false;s.textContent='The 3D view paused. Reload this page to restore your globe.';});
  }
  getPinchDistance(){const [a,b]=this.pointerMap.values();return Math.hypot(a.x-b.x,a.y-b.y);}
+ getPinchCentre(){const [a,b]=this.pointerMap.values();return {x:(a.x+b.x)/2,y:(a.y+b.y)/2};}
  tick(time){
-  requestAnimationFrame(t=>this.tick(t));if(document.hidden){this.lastTime=0;return;}
+  requestAnimationFrame(t=>this.tick(t));if(document.hidden||!this.active){this.lastTime=0;return;}
   const dt=this.lastTime?Math.min((time-this.lastTime)/1000,.05):0;this.lastTime=time;let moved=false;
-  if(this.target){const f=this.reducedMotion?1:1-Math.exp(-dt*6);this.state.lon+=(this.target.lon-this.state.lon)*f;this.state.lat+=(this.target.lat-this.state.lat)*f;if(Math.abs(this.target.lon-this.state.lon)<.05&&Math.abs(this.target.lat-this.state.lat)<.05){this.state.lon=this.target.lon;this.state.lat=this.target.lat;this.target=null;}moved=true;}
+  if(this.target){const f=this.reducedMotion?1:1-Math.exp(-dt*6),zooming=Math.abs(this.target.zoom-this.state.zoom)>.002;this.state.lon+=(this.target.lon-this.state.lon)*f;this.state.lat+=(this.target.lat-this.state.lat)*f;if(zooming){this.state.zoom+=(this.target.zoom-this.state.zoom)*f;this.measure();this.syncZoomUi();}if(Math.abs(this.target.lon-this.state.lon)<.05&&Math.abs(this.target.lat-this.state.lat)<.05&&!zooming){this.state.lon=this.target.lon;this.state.lat=this.target.lat;this.state.zoom=this.target.zoom;this.measure();this.syncZoomUi();this.target=null;}moved=true;}
   else if(this.state.rotating){this.state.lon+=dt*1.8;moved=true;}
   this.onFrame?.(dt);const redraw=moved||this.dirty;
   if(redraw){this.renderer.draw(this.state,this.layout);this.drawMarkers();this.dirty=false;}
@@ -171,13 +182,33 @@ export class Globe {
  }
 
  drawEffects(time){const ctx=this.ctx,l=this.layout,dpr=Math.min(devicePixelRatio||1,2);if(this.effects.width!==Math.round(l.w*dpr)||this.effects.height!==Math.round(l.h*dpr)){this.effects.width=Math.round(l.w*dpr);this.effects.height=Math.round(l.h*dpr);}ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,l.w,l.h);
+  if(this.state.labels&&this.state.zoom>=2.15&&this.adminLines.length){const key=[this.state.lon.toFixed(2),this.state.lat.toFixed(2),this.state.zoom.toFixed(3),l.w,l.h].join(':');if(key!==this.adminPathKey){this.adminPath=projectedPath(l,this.state,this.adminLines);this.adminPathKey=key;}ctx.save();ctx.beginPath();ctx.arc(l.cx,l.cy,l.r,0,Math.PI*2);ctx.clip();ctx.strokeStyle='rgba(214,249,242,.3)';ctx.lineWidth=clamp(this.state.zoom*.33,.72,1.25);ctx.stroke(this.adminPath);ctx.restore();}
   if(!this.reducedMotion){ctx.strokeStyle='#c1f6ff80';ctx.lineWidth=.7;ctx.save();ctx.beginPath();ctx.arc(l.cx,l.cy,l.r,0,Math.PI*2);ctx.clip();for(const p of this.particles){const a=geoVector(p.lat,p.lon+time*p.speed),b=geoVector(p.lat+.5,p.lon+time*p.speed+p.length),start=this.project(a,1.008),end=this.project(b,1.008);if(start.z<.12||end.z<.12)continue;ctx.globalAlpha=Math.min(start.z,.65);ctx.beginPath();ctx.moveTo(start.x,start.y);ctx.quadraticCurveTo((start.x+end.x)/2,(start.y+end.y)/2-1,end.x,end.y);ctx.stroke();}ctx.restore();}
   const selected=cities.find(c=>c.id===this.state.selected),p=this.project(geoVector(selected.lat,selected.lon));if(p.z>.05){const rr=reading(selected,this.state.hour),pulse=this.reducedMotion?0:(time*.4)%1;ctx.globalAlpha=(1-pulse)*.5;ctx.strokeStyle=rr.color;ctx.lineWidth=1;ctx.beginPath();ctx.ellipse(p.x,p.y,10+pulse*18,(10+pulse*18)*Math.max(.35,p.z),0,0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1;}
  }
- drawMarkers(){const selected=this.state.selected,visible=[];for(const pin of this.pins){const c=pin.city,p=this.project(pin.vec,1.015),r=reading(c,this.state.hour),chosen=c.id===selected;pin.el.hidden=p.z<.10||p.x<10||p.x>this.layout.w-10||p.y<10||p.y>this.layout.h-10;if(pin.el.hidden)continue;visible.push({pin,p,r,chosen});}
-  visible.sort((a,b)=>Number(b.chosen)-Number(a.chosen)||b.p.z-a.p.z);const placed=[];this.markerBoxes=[];
-  for(const {pin,p,r,chosen} of visible){const overlap=placed.some(o=>Math.hypot(o.x-p.x,o.y-p.y)<(chosen?0:29));if(overlap&&!chosen){pin.el.hidden=true;continue;}placed.push(p);const half=chosen?20:16;this.markerBoxes.push({left:p.x-half,right:p.x+half,top:p.y-half,bottom:p.y+half});if(chosen){const labelWidth=Math.max(60,pin.city.name.length*7+20);this.markerBoxes.push({left:p.x-labelWidth/2,right:p.x+labelWidth/2,top:p.y+28,bottom:p.y+62});}pin.el.style.left=p.x+'px';pin.el.style.top=p.y+'px';pin.el.style.opacity=clamp(p.z*2,.65,1);const missing=!Number.isFinite(this.state.metric==='temp'?r.temp:this.state.metric==='pm'?r.pm:r.aqi),color=missing?'#a5bacb':this.state.metric==='temp'?temperatureColor(r.temp):r.color;pin.el.style.setProperty('--pin-color',color);pin.el.style.setProperty('--pin-glow',color+'66');pin.el.classList.toggle('selected',chosen);pin.value.textContent=missing?'—':this.state.metric==='temp'?r.temp+'°':this.state.metric==='pm'?Math.round(r.pm):r.aqi;pin.label.hidden=false;pin.label.textContent=pin.city.name;pin.el.setAttribute('aria-label',`${pin.city.name}: ${r.aqi===null?'no reading loaded':r.aqi+' US AQI'}, ${r.source==='IQAir'?'IQAir observation':r.source==='demo'?'simulated':'select to load IQAir data'}. Select city.`);}
+ drawMarkers(){
+  const selected=this.state.selected,visible=[];this.markerBoxes=[];
+  for(const element of this.clusterEls)element.hidden=true;
+  for(const pin of this.pins){const c=pin.city,p=this.project(pin.vec,1.015),r=reading(c,this.state.hour),chosen=c.id===selected;pin.el.hidden=true;if(p.z<.10||p.x<10||p.x>this.layout.w-10||p.y<10||p.y>this.layout.h-10)continue;visible.push({pin,p,r,chosen});}
+  let individuals=visible;
+  if(this.state.zoom<2.3){
+   const cell=Math.round(clamp(78-this.state.zoom*15,46,68)),groups=new Map(),chosen=visible.find(entry=>entry.chosen);individuals=chosen?[chosen]:[];
+   for(const entry of visible){if(entry.chosen)continue;const key=Math.floor(entry.p.x/cell)+':'+Math.floor(entry.p.y/cell);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(entry);}
+   let clusterIndex=0;
+   for(const group of groups.values()){
+    if(group.length===1){individuals.push(group[0]);continue;}
+    const element=this.clusterElement(clusterIndex++),x=group.reduce((sum,item)=>sum+item.p.x,0)/group.length,y=group.reduce((sum,item)=>sum+item.p.y,0)/group.length,centre=vectorToGeo(group.reduce((sum,item)=>sum.map((value,index)=>value+item.pin.vec[index]),[0,0,0]));
+    element.hidden=false;element.style.left=x+'px';element.style.top=y+'px';element.textContent=group.length;element.dataset.lat=centre.lat;element.dataset.lon=centre.lon;element.setAttribute('aria-label',`${group.length} cities nearby. Zoom in to explore.`);this.markerBoxes.push({left:x-22,right:x+22,top:y-22,bottom:y+22});
+   }
+  }
+  individuals.sort((a,b)=>Number(b.chosen)-Number(a.chosen)||b.p.z-a.p.z);const placed=[];
+  for(const {pin,p,r,chosen} of individuals){
+   const overlap=placed.some(other=>Math.hypot(other.x-p.x,other.y-p.y)<(chosen?0:29));if(overlap&&!chosen)continue;placed.push(p);pin.el.hidden=false;
+   const half=chosen?20:16;this.markerBoxes.push({left:p.x-half,right:p.x+half,top:p.y-half,bottom:p.y+half});if(chosen){const labelWidth=Math.max(60,pin.city.name.length*7+20);this.markerBoxes.push({left:p.x-labelWidth/2,right:p.x+labelWidth/2,top:p.y+28,bottom:p.y+62});}
+   pin.el.style.left=p.x+'px';pin.el.style.top=p.y+'px';pin.el.style.opacity=clamp(p.z*2,.65,1);const missing=!Number.isFinite(this.state.metric==='temp'?r.temp:this.state.metric==='pm'?r.pm:r.aqi),color=missing?'#a5bacb':this.state.metric==='temp'?temperatureColor(r.temp):r.color;pin.el.style.setProperty('--pin-color',color);pin.el.style.setProperty('--pin-glow',color+'66');pin.el.classList.toggle('selected',chosen);pin.value.textContent=missing?'—':this.state.metric==='temp'?r.temp+'°':this.state.metric==='pm'?Math.round(r.pm):r.aqi;pin.label.hidden=false;pin.label.textContent=pin.city.name;pin.el.setAttribute('aria-label',`${pin.city.name}: ${r.aqi===null?'no reading loaded':r.aqi+' US AQI'}, ${r.source==='IQAir'?'IQAir observation':r.source==='demo'?'simulated':'select to load IQAir data'}. Select city.`);
+  }
  }
+ clusterElement(index){if(this.clusterEls[index])return this.clusterEls[index];const element=document.createElement('button');element.type='button';element.className='city-cluster';element.hidden=true;element.addEventListener('click',()=>this.focusPlace({lat:Number(element.dataset.lat),lon:Number(element.dataset.lon)},Math.min(MAX_ZOOM,this.state.zoom+1)));this.markers.append(element);this.clusterEls.push(element);return element;}
  drawCountryLabels(){
   this.drawnCountryNames=[];if(!this.state.labels)return;
   const ctx=this.ctx,l=this.layout,selected=cities.find(c=>c.id===this.state.selected),overlaps=(a,b)=>a.left<b.right+5&&a.right>b.left-5&&a.top<b.bottom+4&&a.bottom>b.top-4;
@@ -194,6 +225,12 @@ export class Globe {
    for(const [dx,dy] of offsets){const x=p.x+dx,y=p.y+dy,box={left:x-width/2-3,right:x+width/2+3,top:y-size/2-3,bottom:y+size/2+3};if(box.left<6||box.right>l.w-6||box.top<6||box.bottom>l.h-6||reserved.some(b=>overlaps(box,b)))continue;placement={x,y,box};break;}
    if(!placement)continue;
    ctx.globalAlpha=clamp((p.z-.15)/.35,.45,1);ctx.strokeText(text,placement.x,placement.y);ctx.fillText(text,placement.x,placement.y);reserved.push(placement.box);this.drawnCountryNames.push({name:country.name,box:placement.box,z:p.z});
+  }
+  if(this.state.zoom>=2.9){
+   const preferred=this.focusedPlace?.kind==='subdivision'?this.focusedPlace.name:selected?.subdivision,admins=this.adminPlaces.map(place=>({place,p:this.project(place.vec,1.003)})).filter(({place,p})=>p.z>.28&&this.state.zoom>=Math.max(2.9,place.minZoom)&&place.name!==selected?.name).sort((a,b)=>Number(b.place.name===preferred)-Number(a.place.name===preferred)||a.place.rank-b.place.rank||b.p.z-a.p.z);
+   let shown=0;ctx.lineWidth=2.8;ctx.strokeStyle='rgba(242,255,252,.78)';ctx.fillStyle='#1c5260';
+   for(const {place,p} of admins){if(shown>=(mobile?10:18))break;const size=mobile?8:9;ctx.font=`600 ${size}px "Segoe UI", Arial, sans-serif`;const text=place.name.toLocaleUpperCase('en'),key='admin:'+size+':'+text;if(!this.labelMeasurements.has(key))this.labelMeasurements.set(key,ctx.measureText(text).width);const width=this.labelMeasurements.get(key),offsets=[[0,0],[0,11],[0,-11],[11,0],[-11,0]];let placement;for(const [dx,dy] of offsets){const x=p.x+dx,y=p.y+dy,box={left:x-width/2-3,right:x+width/2+3,top:y-size/2-3,bottom:y+size/2+3};if(box.left<6||box.right>l.w-6||box.top<6||box.bottom>l.h-6||reserved.some(b=>overlaps(box,b)))continue;placement={x,y,box};break;}if(!placement)continue;ctx.globalAlpha=clamp((p.z-.2)/.35,.38,.82);ctx.strokeText(text,placement.x,placement.y);ctx.fillText(text,placement.x,placement.y);reserved.push(placement.box);shown++;
+   }
   }
   ctx.restore();
  }

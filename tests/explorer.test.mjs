@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {filterCities,nearestCity,loadPreferences,savePreferences} from '../public/explorer.js';
 import {setReadingMode,setLiveReading,reading,cities} from '../public/data.js';
 test('search, regions, saved cities and sort operate together',()=>{
- setReadingMode('demo');assert.equal(filterCities({query:'sao paulo'})[0].id,'sao-paulo');assert(filterCities({region:'Asia'}).every(c=>c.region==='Asia'));assert.equal(filterCities({savedOnly:true,saved:['singapore']})[0].id,'singapore');assert.equal(filterCities({savedOnly:true,saved:[]}).length,0);
+ setReadingMode('demo');assert.equal(filterCities({query:'sao paulo'})[0].id,'sao-paulo');assert.equal(filterCities({query:'karnataka'})[0].id,'bengaluru');assert(filterCities({region:'Asia'}).every(c=>c.region==='Asia'));assert.equal(filterCities({savedOnly:true,saved:['singapore']})[0].id,'singapore');assert.equal(filterCities({savedOnly:true,saved:[]}).length,0);
  const lowest=filterCities({sort:'lowest'});assert(reading(lowest[0]).aqi<=reading(lowest.at(-1)).aqi);
 });
 test('live mode never substitutes demo data for unloaded locations',()=>{
