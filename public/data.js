@@ -53,6 +53,11 @@ export const categories=[
  {max:Infinity,label:'Hazardous',color:'#cf719d'}
 ];
 export const category=aqi=>categories.find(c=>aqi<=c.max);
+let readingMode='demo';
+const liveReadings=new Map();
+export function setReadingMode(mode){readingMode=mode==='live'?'live':'demo';}
+export function setLiveReading(id,record){if(cities.some(c=>c.id===id))liveReadings.set(id,record);}
+export function getLiveReading(id){return liveReadings.get(id)??null;}
 export const clamp=(v,min,max)=>Math.min(max,Math.max(min,v));
 export function pmFromAqi(aqi){
  const breakpoints=[[0,50,0,9],[51,100,9.1,35.4],[101,150,35.5,55.4],[151,200,55.5,125.4],[201,300,125.5,225.4],[301,500,225.5,325.4]];
@@ -60,11 +65,16 @@ export function pmFromAqi(aqi){
  return Math.round((cl+(ch-cl)*(aqi-lo)/(hi-lo))*10)/10;
 }
 export function reading(city,hour=12){
+ if(readingMode==='live'){
+  const record=liveReadings.get(city.id);
+  if(!record)return {aqi:null,pm:null,temp:null,humidity:null,color:'#a5bacb',label:'Select to load',source:'unloaded'};
+  return {...record,...category(record.aqi),source:'IQAir'};
+ }
  const wave=h=>Math.sin((h/24)*Math.PI*2+city.index*.8)*city.baseAqi*.18+Math.cos((h/24)*Math.PI*4+city.index*.4)*city.baseAqi*.08;
  const aqi=clamp(Math.round(city.baseAqi+wave(hour)-wave(12)),3,499);
  const temp=Math.round(city.baseTemp+4*(Math.sin((hour-6)*Math.PI/12)-1));
  const humidity=clamp(Math.round(city.baseHumidity-4*(Math.sin((hour-6)*Math.PI/12)-1)),15,98);
- return {aqi,pm:pmFromAqi(aqi),temp,humidity,...category(aqi)};
+ return {aqi,pm:pmFromAqi(aqi),temp,humidity,...category(aqi),source:'demo'};
 }
 export function geoVector(lat,lon){
  const p=lat*Math.PI/180,l=lon*Math.PI/180,c=Math.cos(p);

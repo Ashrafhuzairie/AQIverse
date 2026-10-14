@@ -1,51 +1,57 @@
 # AQIverse
 
-The Atmos Atlas prototype for the AQIverse project.
-
-An animated 3D world concept inspired by IQAir, with 41 simulated city readings.
-
-The site is dependency-free static HTML, CSS, and JavaScript. WebGL renders the
-globe, with a Canvas 2D orthographic 3D projection fallback. All assets are local.
-`dist/world.json` contains public-domain Natural Earth 1:110m country outlines and geographic label positions.
+An interactive 3D air-quality globe with an original nature, wind, atmosphere and heartbeat identity.
 
 ## Features
 
-- Brighter blue oceans, fresh green land, and cyan interface accents.
-- Geographic country labels with zoom thresholds, horizon hiding, and collision avoidance.
-- Country-name visibility switch.
-- Drag, arrow keys, scroll, pinch, and button controls for rotation and zoom.
-- Searchable cities, region filters, and reversible US AQI sorting.
-- City selection and smooth camera focus.
-- US AQI, PM2.5, and temperature layers; grid and illustrative halo switches.
-- Simulated 24-hour readings and playback.
-- Reduced-motion support, keyboard controls, responsive layout, and data notes.
+- Live IQAir observations for selected cities, with observation timestamps and reporting-location details.
+- A separate simulated Demo day with a 24-hour timeline and playback speeds.
+- Rotating and zoomable Earth, geographic country labels, and city-marker hover names.
+- Saved cities, region filters, search reset, clear sorting, and locally computed nearest listed city.
+- AQI scale explainer, mobile drawer, keyboard shortcuts and reduced-motion support.
+- A stationary default globe and reduced idle WebGL redraws.
 
-## Local use
+## API key
 
-Serve `dist` with any static HTTP server. For example, from the project directory:
+On the hosted Site, store the key as a **secret** named `IQAir_API_KEY`. `IQAIR_API_KEY` is also supported. The key is read only by the Worker; it is never embedded in HTML, client JavaScript, API responses, or GitHub.
+
+For local use, copy `.dev.vars.example` to `.dev.vars` and replace the placeholder there. `.dev.vars` is ignored by Git.
+
+## Run locally
+
+Node 20 or later is sufficient; there are no dependencies to install.
 
 ```sh
-python -m http.server 8000 --directory dist
+npm run dev
 ```
 
-## Data status
+Open the local URL printed by the server. The local server binds to loopback only.
 
-Every AQI, pollutant value, weather value, and hourly trend is simulated. No
-IQAir API key is configured, and no live observations are fetched. PM2.5 values
-are derived from the simulated AQI using the US EPA PM2.5 category breakpoints.
-The halos are a visual interpolation around cities, not measured global coverage.
-Particle trails are decorative and do not represent measured wind or transport.
+```sh
+npm test
+npm run build
+```
 
-## Future live integration
+`public/` contains editable browser assets. `worker/index.js` contains the server and an automatically refreshed asset block. `scripts/prepare-worker.mjs` embeds essential assets, including raster bytes, into the dependency-free Worker. The Sites Worker ESM build and validator produce `dist/server/index.js`.
 
-Use an IQAir API plan that covers the desired fields, with server-side credentials
-and cached requests to respect the plan's rate limits. Normalize the API response
-to city coordinates, US AQI, timestamps, and available weather/pollutant fields.
-Remove the demo badges only after connecting verified observations. Show source
-timestamps and distinguish stale, missing, and forecast values. The free API plan
-does not provide the same pollutant fields as paid plans.
+For an independent Cloudflare Worker, use `wrangler.jsonc` and configure the API key as a Worker secret. The ChatGPT-hosted Site uses `.openai/hosting.json`; its identity and audience are preserved.
 
-References: https://www.iqair.com/sg/, https://www.iqair.com/air-pollution-data-api,
-https://www.airnow.gov/aqi/aqi-basics/, https://www.naturalearthdata.com/.
+## Data and limits
 
-The independently designed site is not affiliated with IQAir.
+Live city mode uses IQAir's nearest-city endpoint for 41 listed city coordinates. The reporting location returned by IQAir can differ from the requested city and is shown when it does. Unloaded or unavailable locations display a dash; they never receive simulated readings in live mode.
+
+The API plan determines available fields. PM2.5 concentrations are shown only if returned by IQAir in the expected units; they are not derived from the live AQI. Demo mode derives illustrative PM2.5 values from its fictional AQI values and is explicitly labelled.
+
+Successful observations are cached for up to 30 minutes. Requests to new uncached cities are spaced conservatively, and API-limit errors are surfaced. The app does not automatically fetch all cities or run unattended polling. Cloudflare cache and isolate memory reduce requests; isolate spacing is not a global quota guarantee.
+
+The observation timestamp is distinct from the fetch time. Observations older than six hours are labelled. Pollution halos are illustrative interpolation, and air trails are decorative; neither represents measured global coverage or wind transport.
+
+Geolocation is requested only after Near me is clicked, used locally to choose the nearest listed city, and never stored. Saved city IDs and display preferences are kept locally in the browser.
+
+## Logo and geography
+
+`public/logo.svg` is the full wordmark; `public/logo-mark.svg` is the transparent symbol. `public/favicon.svg` uses the same mark. `public/logo-preview.png` is a rendered preview on the site background.
+
+Country outlines and label positions use public-domain Natural Earth 1:110m data, with additional small-country labels. AQIverse is an independent project inspired by IQAir and is not affiliated with it.
+
+References: https://www.iqair.com/sg/, https://api-docs.iqair.com/, https://www.airnow.gov/aqi/aqi-basics/, https://www.naturalearthdata.com/.

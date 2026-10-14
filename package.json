@@ -1,1 +1,11 @@
-{"name":"atmos-atlas","private":true,"type":"module","description":"An independent animated 3D air quality explorer, with transparent simulated data."}
+{
+  "name": "aqiverse",
+  "private": true,
+  "type": "module",
+  "description": "An independent animated 3D air quality explorer, with transparent simulated data.",
+  "scripts": {
+    "build": "node scripts/prepare-worker.mjs && bash scripts/build.sh && node scripts/validate-artifact.mjs",
+    "dev": "node scripts/prepare-worker.mjs && node scripts/dev.mjs",
+    "test": "node scripts/prepare-worker.mjs && node --test tests/*.test.mjs"
+  }
+}

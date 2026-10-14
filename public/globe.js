@@ -105,7 +105,7 @@ function makeWebGL(canvas,polygons){
   gl.uniform2f(uniforms.uScale,2*layout.r/layout.w,2*layout.r/layout.h);
   gl.uniform1f(uniforms.uHeat,state.heat?1:0);gl.uniform1f(uniforms.uGrid,state.grid?1:0);gl.uniform1f(uniforms.uTemperature,state.metric==='temp'?1:0);
   const points=new Float32Array(48*4);for(let i=0;i<48;i++){points[i*4+3]=-100;}
-  cities.forEach((c,i)=>{const v=geoVector(c.lat,c.lon),r=reading(c,state.hour);points.set([...v,state.metric==='temp'?r.temp:r.aqi],i*4);});gl.uniform4fv(uniforms['uCities[0]'],points);
+  cities.forEach((c,i)=>{const v=geoVector(c.lat,c.lon),r=reading(c,state.hour),value=state.metric==='temp'?r.temp:state.metric==='pm'&&r.pm===null?null:r.aqi;if(Number.isFinite(value))points.set([...v,value],i*4);});gl.uniform4fv(uniforms['uCities[0]'],points);
   gl.drawElements(gl.TRIANGLES,indices.length,gl.UNSIGNED_SHORT,0);
  }};
 }
@@ -122,7 +122,7 @@ function makeCanvasFallback(canvas,polygons){
    ctx.fillStyle='#86d0aa';ctx.strokeStyle='#e6ffea85';ctx.lineWidth=.75;ctx.fill();ctx.stroke();
   }
   if(state.grid){ctx.strokeStyle='#d8f6ff2a';ctx.lineWidth=.6;for(let lat=-75;lat<=75;lat+=15){drawProjectedLine(ctx,l,state,Array.from({length:181},(_,i)=>geoVector(lat,i*2-180)));}for(let lon=-180;lon<180;lon+=15){drawProjectedLine(ctx,l,state,Array.from({length:91},(_,i)=>geoVector(i*2-90,lon)));}}
-  if(state.heat)for(const c of cities){const v=rotateVector(geoVector(c.lat,c.lon),state.lon,state.lat);if(v[2]<0)continue;const r=reading(c,state.hour),color=state.metric==='temp'?temperatureColor(r.temp):r.color,x=l.cx+v[0]*l.r,y=l.cy-v[1]*l.r,g=ctx.createRadialGradient(x,y,0,x,y,l.r*.1);g.addColorStop(0,color+'65');g.addColorStop(1,color+'00');ctx.fillStyle=g;ctx.fillRect(x-l.r*.1,y-l.r*.1,l.r*.2,l.r*.2);}
+  if(state.heat)for(const c of cities){const v=rotateVector(geoVector(c.lat,c.lon),state.lon,state.lat);if(v[2]<0)continue;const r=reading(c,state.hour);if(!Number.isFinite(state.metric==='temp'?r.temp:r.aqi)||(state.metric==='pm'&&r.pm===null))continue;const color=state.metric==='temp'?temperatureColor(r.temp):r.color,x=l.cx+v[0]*l.r,y=l.cy-v[1]*l.r,g=ctx.createRadialGradient(x,y,0,x,y,l.r*.1);g.addColorStop(0,color+'65');g.addColorStop(1,color+'00');ctx.fillStyle=g;ctx.fillRect(x-l.r*.1,y-l.r*.1,l.r*.2,l.r*.2);}
   const shadow=ctx.createLinearGradient(l.cx-l.r,l.cy-l.r,l.cx+l.r,l.cy+l.r);shadow.addColorStop(0,'#12345400');shadow.addColorStop(1,'#061f5a8a');ctx.fillStyle=shadow;ctx.fillRect(l.cx-l.r,l.cy-l.r,l.r*2,l.r*2);ctx.restore();
  }};
 }
@@ -159,18 +159,24 @@ export class Globe {
   c.addEventListener('webglcontextlost',e=>{e.preventDefault();const s=document.getElementById('canvas-status');s.hidden=false;s.textContent='The 3D view paused. Reload this page to restore your globe.';});
  }
  getPinchDistance(){const [a,b]=this.pointerMap.values();return Math.hypot(a.x-b.x,a.y-b.y);}
- tick(time){requestAnimationFrame(t=>this.tick(t));if(document.hidden){this.lastTime=0;return;}const dt=this.lastTime?Math.min((time-this.lastTime)/1000,.05):0;this.lastTime=time;let animate=false;
-  if(this.target){const f=this.reducedMotion?1:1-Math.exp(-dt*6);this.state.lon+=(this.target.lon-this.state.lon)*f;this.state.lat+=(this.target.lat-this.state.lat)*f;if(Math.abs(this.target.lon-this.state.lon)<.05&&Math.abs(this.target.lat-this.state.lat)<.05){this.state.lon=this.target.lon;this.state.lat=this.target.lat;this.target=null;}animate=true;}
-  else if(this.state.rotating){this.state.lon+=dt*1.8;animate=true;}
-  this.onFrame?.(dt);if(!this.reducedMotion)animate=true;if(!animate&&!this.dirty)return;this.dirty=false;this.renderer.draw(this.state,this.layout);this.drawEffects(time/1000);this.drawMarkers();this.drawCountryLabels();
+ tick(time){
+  requestAnimationFrame(t=>this.tick(t));if(document.hidden){this.lastTime=0;return;}
+  const dt=this.lastTime?Math.min((time-this.lastTime)/1000,.05):0;this.lastTime=time;let moved=false;
+  if(this.target){const f=this.reducedMotion?1:1-Math.exp(-dt*6);this.state.lon+=(this.target.lon-this.state.lon)*f;this.state.lat+=(this.target.lat-this.state.lat)*f;if(Math.abs(this.target.lon-this.state.lon)<.05&&Math.abs(this.target.lat-this.state.lat)<.05){this.state.lon=this.target.lon;this.state.lat=this.target.lat;this.target=null;}moved=true;}
+  else if(this.state.rotating){this.state.lon+=dt*1.8;moved=true;}
+  this.onFrame?.(dt);const redraw=moved||this.dirty;
+  if(redraw){this.renderer.draw(this.state,this.layout);this.drawMarkers();this.dirty=false;}
+  if(!redraw&&(this.reducedMotion||time-(this.lastEffectsTime||0)<1000/30))return;
+  this.lastEffectsTime=time;this.drawEffects(time/1000);this.drawCountryLabels();
  }
+
  drawEffects(time){const ctx=this.ctx,l=this.layout,dpr=Math.min(devicePixelRatio||1,2);if(this.effects.width!==Math.round(l.w*dpr)||this.effects.height!==Math.round(l.h*dpr)){this.effects.width=Math.round(l.w*dpr);this.effects.height=Math.round(l.h*dpr);}ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,l.w,l.h);
   if(!this.reducedMotion){ctx.strokeStyle='#c1f6ff80';ctx.lineWidth=.7;ctx.save();ctx.beginPath();ctx.arc(l.cx,l.cy,l.r,0,Math.PI*2);ctx.clip();for(const p of this.particles){const a=geoVector(p.lat,p.lon+time*p.speed),b=geoVector(p.lat+.5,p.lon+time*p.speed+p.length),start=this.project(a,1.008),end=this.project(b,1.008);if(start.z<.12||end.z<.12)continue;ctx.globalAlpha=Math.min(start.z,.65);ctx.beginPath();ctx.moveTo(start.x,start.y);ctx.quadraticCurveTo((start.x+end.x)/2,(start.y+end.y)/2-1,end.x,end.y);ctx.stroke();}ctx.restore();}
   const selected=cities.find(c=>c.id===this.state.selected),p=this.project(geoVector(selected.lat,selected.lon));if(p.z>.05){const rr=reading(selected,this.state.hour),pulse=this.reducedMotion?0:(time*.4)%1;ctx.globalAlpha=(1-pulse)*.5;ctx.strokeStyle=rr.color;ctx.lineWidth=1;ctx.beginPath();ctx.ellipse(p.x,p.y,10+pulse*18,(10+pulse*18)*Math.max(.35,p.z),0,0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1;}
  }
  drawMarkers(){const selected=this.state.selected,visible=[];for(const pin of this.pins){const c=pin.city,p=this.project(pin.vec,1.015),r=reading(c,this.state.hour),chosen=c.id===selected;pin.el.hidden=p.z<.10||p.x<10||p.x>this.layout.w-10||p.y<10||p.y>this.layout.h-10;if(pin.el.hidden)continue;visible.push({pin,p,r,chosen});}
   visible.sort((a,b)=>Number(b.chosen)-Number(a.chosen)||b.p.z-a.p.z);const placed=[];this.markerBoxes=[];
-  for(const {pin,p,r,chosen} of visible){const overlap=placed.some(o=>Math.hypot(o.x-p.x,o.y-p.y)<(chosen?0:29));if(overlap&&!chosen){pin.el.hidden=true;continue;}placed.push(p);const half=chosen?20:16;this.markerBoxes.push({left:p.x-half,right:p.x+half,top:p.y-half,bottom:p.y+half});if(chosen){const labelWidth=Math.max(60,pin.city.name.length*7+20);this.markerBoxes.push({left:p.x-labelWidth/2,right:p.x+labelWidth/2,top:p.y+28,bottom:p.y+62});}pin.el.style.left=p.x+'px';pin.el.style.top=p.y+'px';pin.el.style.opacity=clamp(p.z*2,.65,1);const color=this.state.metric==='temp'?temperatureColor(r.temp):r.color;pin.el.style.setProperty('--pin-color',color);pin.el.style.setProperty('--pin-glow',color+'66');pin.el.classList.toggle('selected',chosen);pin.value.textContent=this.state.metric==='temp'?r.temp+'°':this.state.metric==='pm'?Math.round(r.pm):r.aqi;pin.label.hidden=!chosen;pin.label.textContent=pin.city.name;pin.el.setAttribute('aria-label',`${pin.city.name}: ${r.aqi} US AQI, simulated. Select city.`);}
+  for(const {pin,p,r,chosen} of visible){const overlap=placed.some(o=>Math.hypot(o.x-p.x,o.y-p.y)<(chosen?0:29));if(overlap&&!chosen){pin.el.hidden=true;continue;}placed.push(p);const half=chosen?20:16;this.markerBoxes.push({left:p.x-half,right:p.x+half,top:p.y-half,bottom:p.y+half});if(chosen){const labelWidth=Math.max(60,pin.city.name.length*7+20);this.markerBoxes.push({left:p.x-labelWidth/2,right:p.x+labelWidth/2,top:p.y+28,bottom:p.y+62});}pin.el.style.left=p.x+'px';pin.el.style.top=p.y+'px';pin.el.style.opacity=clamp(p.z*2,.65,1);const missing=!Number.isFinite(this.state.metric==='temp'?r.temp:this.state.metric==='pm'?r.pm:r.aqi),color=missing?'#a5bacb':this.state.metric==='temp'?temperatureColor(r.temp):r.color;pin.el.style.setProperty('--pin-color',color);pin.el.style.setProperty('--pin-glow',color+'66');pin.el.classList.toggle('selected',chosen);pin.value.textContent=missing?'—':this.state.metric==='temp'?r.temp+'°':this.state.metric==='pm'?Math.round(r.pm):r.aqi;pin.label.hidden=false;pin.label.textContent=pin.city.name;pin.el.setAttribute('aria-label',`${pin.city.name}: ${r.aqi===null?'no reading loaded':r.aqi+' US AQI'}, ${r.source==='IQAir'?'IQAir observation':r.source==='demo'?'simulated':'select to load IQAir data'}. Select city.`);}
  }
  drawCountryLabels(){
   this.drawnCountryNames=[];if(!this.state.labels)return;
