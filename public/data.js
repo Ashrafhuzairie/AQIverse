@@ -195,7 +195,7 @@ export function pmFromAqi(aqi){
 export function reading(city,hour=12){
  if(readingMode==='live'){
   const record=liveReadings.get(city.id);
-  if(!record)return {aqi:null,pm:null,temp:null,humidity:null,color:'#a5bacb',label:'Select to load',source:'unloaded'};
+  if(!record)return {aqi:null,pm:null,temp:null,humidity:null,color:'#a5bacb',label:'Loading live data',source:'unloaded'};
   return {...record,...category(record.aqi),source:'IQAir'};
  }
  const wave=h=>Math.sin((h/24)*Math.PI*2+city.index*.8)*city.baseAqi*.18+Math.cos((h/24)*Math.PI*4+city.index*.4)*city.baseAqi*.08;

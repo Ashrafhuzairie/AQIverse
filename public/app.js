@@ -1,5 +1,5 @@
 import {cities,reading,clamp,categories,setReadingMode,setLiveReading,getLiveReading} from './data.js';
-import {Globe,MIN_ZOOM,MAX_ZOOM} from './globe.js?v=terrain-colour-6';
+import {Globe,MIN_ZOOM,MAX_ZOOM} from './globe.js?v=live-coverage-1';
 import {filterCities,nearestCity,loadPreferences,savePreferences,normalize} from './explorer.js';
 
 const $=id=>document.getElementById(id);
@@ -9,7 +9,8 @@ const preferences=loadPreferences(storage),saved=new Set(preferences.saved);
 const initial=cities.find(c=>c.id===preferences.selected);
 const state={lon:initial.id==='singapore'?98:initial.lon,lat:initial.id==='singapore'?16:initial.lat,zoom:1,selected:initial.id,hour:12,rotating:false,dataMode:'live',heat:preferences.heat,grid:preferences.grid,labels:preferences.labels,metric:['aqi','temp'].includes(preferences.metric)?preferences.metric:'aqi'};
 setReadingMode('live');
-let liveTimer,liveRequest,liveSequence=0,liveBusy=false,apiConfigured=null;
+let liveTimer,liveRequest,liveSequence=0,liveBusy=false,apiConfigured=null,coverageTimer,coverageRequest,coverageBusy=false,providerCooldownUntil=0;
+const coverageSkipped=new Set(),LIVE_FRESH_MS=1800000,pageWasReloaded=performance.getEntriesByType?.('navigation')[0]?.type==='reload';
 let query='',region='All',sort='highest',savedOnly=false,rows=new Map(),toastTimer,placeIndex=[],searchResults=[],activePlaceIndex=-1;
 const selectedCity=()=>cities.find(c=>c.id===state.selected);
 const persist=()=>savePreferences(storage,{selected:state.selected,dataMode:'live',metric:state.metric,saved:[...saved],heat:state.heat,grid:state.grid,labels:state.labels});
@@ -29,6 +30,7 @@ function setSidebar(open,restore=true){
 }
 function selectCity(id,focus=true){
  if(!cities.some(c=>c.id===id))return;state.selected=id;
+ clearTimeout(coverageTimer);coverageRequest?.abort();
  if(focus){globe.focus(selectedCity());updateRotation();}
  updateSelected();updateRows();persist();globe.measure();globe.refresh();if(state.dataMode==='live')queueLiveCity(id);
  if(innerWidth<=760&&$('sidebar').classList.contains('open')){setSidebar(false,false);$('earth').focus({preventScroll:true});}
@@ -37,7 +39,7 @@ function updateSaved(){
  const chosen=saved.has(state.selected),button=$('save-city');button.classList.toggle('saved',chosen);button.setAttribute('aria-pressed',String(chosen));button.setAttribute('aria-label',`${chosen?'Unsave':'Save'} ${selectedCity().name}`);button.title=chosen?'Remove from saved cities':'Save city';$('saved-count').textContent=saved.size;
 }
 function updateRows(){
- for(const [id,row] of rows){const c=cities.find(c=>c.id===id),r=reading(c,state.hour);row.classList.toggle('selected',id===state.selected);row.setAttribute('aria-pressed',String(id===state.selected));row.style.setProperty('--row-color',r.color);row.querySelector('.row-number').textContent=r.aqi??'—';row.setAttribute('aria-label',`${c.name}, ${c.country}. ${r.source==='IQAir'?'IQAir observation':'Select to load live data'}, US AQI ${r.aqi??'not loaded'}, ${r.label}.${saved.has(id)?' Saved.':''}`);}
+ for(const [id,row] of rows){const c=cities.find(c=>c.id===id),r=reading(c,state.hour);row.classList.toggle('selected',id===state.selected);row.setAttribute('aria-pressed',String(id===state.selected));row.style.setProperty('--row-color',r.color);row.querySelector('.row-number').textContent=r.aqi??'—';row.setAttribute('aria-label',`${c.name}, ${c.country}. ${r.source==='IQAir'?'IQAir observation':'Live observation loading automatically'}, US AQI ${r.aqi??'not loaded'}, ${r.label}.${saved.has(id)?' Saved.':''}`);}
 }
 function placeScore(place,q){const name=normalize(place.name),context=normalize(`${place.subdivision||''} ${place.country||''} ${place.code||''}`);if(name===q)return 0;if(name.startsWith(q))return 1;if(name.includes(q))return 2;if(context.includes(q))return 3;return 99;}
 function matchingPlaces(){const q=normalize(query);if(q.length<2)return [];const cityPlaces=cities.map(city=>({kind:'city',...city,zoom:2.9})),order={country:0,subdivision:1,city:2};return [...placeIndex,...cityPlaces].map(place=>({place,score:placeScore(place,q)})).filter(item=>item.score<99).sort((a,b)=>a.score-b.score||order[a.place.kind]-order[b.place.kind]||a.place.name.localeCompare(b.place.name)).slice(0,9).map(item=>item.place);}
@@ -60,7 +62,8 @@ function updateSelected(){
  $('iqair-city-link').href='https://www.iqair.com/sg/'+c.iqairPath;updateSaved();
 }
 function renderLegend(){
- const legends={aqi:{title:'US AQI',direction:'LOW → HIGH',values:['0','50','100','150','200','300+'],note:'Loaded city readings; halos are illustrative.'},temp:{title:'TEMPERATURE · °C',direction:'COOL → WARM',values:['−10','0','10','20','30+'],note:'Weather for loaded cities; not global coverage.'}};
+ const loaded=cities.reduce((total,city)=>total+Number(Boolean(getLiveReading(city.id))),0),progress=`${loaded}/${cities.length} live locations loaded`;
+ const legends={aqi:{title:'US AQI',direction:'LOW → HIGH',values:['0','50','100','150','200','300+'],note:`${progress}; visible cities load first.`},temp:{title:'TEMPERATURE · °C',direction:'COOL → WARM',values:['−10','0','10','20','30+'],note:`${progress}; visible cities load first.`}};
  const l=legends[state.metric],colours=state.metric==='temp'?['#82b9d4','#99d2ba','#d2dd9b','#edcb87','#eb986d']:categories.map(c=>c.color);
  $('legend').innerHTML=`<div class="legend-title">${l.title}<span>${l.direction}</span></div><div class="legend-bar">${colours.map(c=>`<i style="background:${c}"></i>`).join('')}</div><div class="legend-values">${l.values.map(v=>`<span>${v}</span>`).join('')}</div><span class="legend-note">${l.note}</span>`;$('heat-toggle').parentElement.lastChild.textContent=state.metric==='temp'?'Temperature':'Halos';
 }
@@ -70,25 +73,47 @@ function describeObservation(record){
  const date=new Date(record.observedAt),format=new Intl.DateTimeFormat('en',{dateStyle:'medium',timeStyle:'short'});
  const old=Date.now()-date.getTime()>6*3600*1000;return `Observed ${format.format(date)}${old?' · Older observation':''}. Cached requests reduce API use.`;
 }
-function queueLiveCity(id){clearTimeout(liveTimer);liveBusy=true;$('live-status').textContent='Loading IQAir observation…';updateSelected();liveTimer=setTimeout(()=>loadLiveCity(id),350);}
+function queueLiveCity(id){clearTimeout(liveTimer);clearTimeout(coverageTimer);coverageRequest?.abort();liveBusy=true;$('live-status').textContent='Loading IQAir observation…';updateSelected();liveTimer=setTimeout(()=>loadLiveCity(id),350);}
+async function requestLiveCity(id,refresh=false,signal){
+ const response=await fetch('/api/air-quality?city='+encodeURIComponent(id)+(refresh?'&refresh=1':''),{signal,headers:{Accept:'application/json'}}),payload=await response.json();
+ if(!response.ok||payload.status!=='success'||!Number.isFinite(payload.record?.aqi)){const error=new Error(payload.message||'IQAir data is unavailable for this city.');error.status=response.status;error.retryAfter=Number(payload.retryAfter||response.headers.get('Retry-After'))||0;if(error.status===429)providerCooldownUntil=Date.now()+error.retryAfter*1000;throw error;}
+ if(!payload.cached)providerCooldownUntil=Date.now()+15250;
+ setLiveReading(id,payload.record);return payload;
+}
 async function loadLiveCity(id,refresh=false){
  clearTimeout(liveTimer);const sequence=++liveSequence;liveRequest?.abort();liveRequest=new AbortController();$('refresh-live').disabled=false;
  const previous=getLiveReading(id);
- if(previous&&!refresh&&Date.now()-Date.parse(previous.fetchedAt)<1800000){liveBusy=false;$('live-status').textContent=describeObservation(previous);updateSelected();globe.refresh();return;}
+ if(previous&&!refresh&&Date.now()-Date.parse(previous.fetchedAt)<LIVE_FRESH_MS){liveBusy=false;$('live-status').textContent=describeObservation(previous);updateSelected();globe.refresh();scheduleLiveCoverage();return;}
  if(apiConfigured===false){liveBusy=false;$('live-status').textContent='IQAir is not configured for this deployment. Add an API key to load observations.';updateSelected();return;}
  liveBusy=true;$('refresh-live').disabled=true;updateSelected();
+ let retrying=false;
  try{
-  const response=await fetch('/api/air-quality?city='+encodeURIComponent(id),{signal:liveRequest.signal,headers:{Accept:'application/json'}}),payload=await response.json();
-  if(!response.ok||payload.status!=='success'||!Number.isFinite(payload.record?.aqi))throw new Error(payload.message||'IQAir data is unavailable for this city.');
-  setLiveReading(id,payload.record);
+  const payload=await requestLiveCity(id,refresh,liveRequest.signal);
   if(sequence!==liveSequence||state.dataMode!=='live'||state.selected!==id)return;
-  liveBusy=false;$('live-status').textContent=describeObservation(payload.record);renderList();updateSelected();globe.measure();globe.refresh();
- }catch(error){if(error.name==='AbortError'||sequence!==liveSequence||state.dataMode!=='live'||state.selected!==id)return;liveBusy=false;$('live-status').textContent=error.message+(previous?' Showing last observation: '+describeObservation(previous):'');updateSelected();globe.refresh();}
- finally{if(sequence===liveSequence)$('refresh-live').disabled=false;}
+  liveBusy=false;$('live-status').textContent=describeObservation(payload.record);renderList();renderLegend();updateSelected();globe.measure();globe.refresh();
+ }catch(error){if(error.name==='AbortError'||sequence!==liveSequence||state.dataMode!=='live'||state.selected!==id)return;if(error.status===429&&error.retryAfter){retrying=true;liveBusy=true;$('live-status').textContent=`IQAir is pacing requests. Retrying ${selectedCity().name} in ${error.retryAfter} seconds…`;updateSelected();liveTimer=setTimeout(()=>loadLiveCity(id,refresh),error.retryAfter*1000+150);return;}liveBusy=false;$('live-status').textContent=error.message+(previous?' Showing last observation: '+describeObservation(previous):'');updateSelected();globe.refresh();}
+ finally{if(sequence===liveSequence)$('refresh-live').disabled=false;if(!retrying)scheduleLiveCoverage();}
+}
+function nextCoverageCity(){
+ const visible=globe.getVisibleCityIds?.()??[],ordered=[...new Set([...visible,...cities.map(city=>city.id)])];
+ return ordered.find(id=>id!==state.selected&&!coverageSkipped.has(id)&&!getLiveReading(id));
+}
+function scheduleLiveCoverage(delay=250){
+ clearTimeout(coverageTimer);if(apiConfigured!==true||coverageBusy)return;
+ const id=nextCoverageCity();if(!id)return;
+ coverageTimer=setTimeout(()=>loadNextCoverageCity(id),Math.max(delay,providerCooldownUntil-Date.now()));
+}
+async function loadNextCoverageCity(id){
+ if(document.hidden||liveBusy){scheduleLiveCoverage(1200);return;}
+ coverageBusy=true;coverageRequest=new AbortController();
+ try{
+  const payload=await requestLiveCity(id,false,coverageRequest.signal);renderList();renderLegend();globe.refresh();
+  coverageBusy=false;scheduleLiveCoverage(payload.cached?60:15250);
+ }catch(error){coverageBusy=false;if(error.name==='AbortError'){scheduleLiveCoverage(1200);return;}if(error.status===429){scheduleLiveCoverage((error.retryAfter||15)*1000+150);return;}coverageSkipped.add(id);if(error.status===401||error.status===503){apiConfigured=false;return;}scheduleLiveCoverage(250);}
 }
 async function bootstrapData(){
  try{const response=await fetch('/api/config',{headers:{Accept:'application/json'}});if(!response.ok)throw new Error();const config=await response.json();apiConfigured=Boolean(config.configured);
-  if(apiConfigured)loadLiveCity(state.selected);else{$('live-status').textContent='IQAir is not configured for this deployment. Add an API key to load observations.';notify('Live observations need an IQAir API key.');}
+  if(apiConfigured)loadLiveCity(state.selected,pageWasReloaded);else{$('live-status').textContent='IQAir is not configured for this deployment. Add an API key to load observations.';notify('Live observations need an IQAir API key.');}
  }catch{apiConfigured=false;$('live-status').textContent='The live data connection is unavailable. Try again shortly.';notify('The live data connection is unavailable.');}
 }
 $('refresh-live').addEventListener('click',()=>loadLiveCity(state.selected,true));

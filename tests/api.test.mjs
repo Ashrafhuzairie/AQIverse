@@ -27,7 +27,8 @@ test('API keeps credentials private, validates cities, caches results and report
   const invalid=await worker.fetch(request('/api/air-quality?city=__proto__'),env);assert.equal(invalid.status,404);assert.equal(calls,0);
   const first=await worker.fetch(request('/api/air-quality?city=singapore'),env),body=await first.text();assert(!body.includes(env.IQAir_API_KEY));assert.equal(JSON.parse(body).record.pm,null);assert.equal(calls,1);
   const cached=await worker.fetch(request('/api/air-quality?city=singapore'),env);assert.equal((await cached.json()).cached,true);assert.equal(calls,1);
-  const spaced=await worker.fetch(request('/api/air-quality?city=tokyo'),env);assert.equal(spaced.status,429);assert.equal(calls,1);
+  clock+=16000;const refreshed=await worker.fetch(request('/api/air-quality?city=singapore&refresh=1'),env);assert.equal((await refreshed.json()).cached,false);assert.equal(calls,2);
+  const spaced=await worker.fetch(request('/api/air-quality?city=tokyo'),env);assert.equal(spaced.status,429);assert.equal(calls,2);
   clock+=16000;failure=true;const rejected=await worker.fetch(request('/api/air-quality?city=tokyo'),env);assert.equal(rejected.status,401);assert(!(await rejected.text()).includes(env.IQAir_API_KEY));
   const frontend=await worker.fetch(request('/app.js'),env);assert.equal(frontend.status,200);assert(!(await frontend.text()).includes(env.IQAir_API_KEY));
   assert.equal((await worker.fetch(new Request('https://example.test/api/config',{method:'POST'}),env)).status,405);
