@@ -1,2 +1,2 @@
 # Copy to .dev.vars for local use only. Never commit the actual key.
-IQAir_API_KEY=YOUR_KEY_HERE
+IQAIR_API_KEY = YOURKEYHERE

@@ -1,5 +1,5 @@
 import {cities,reading,clamp,categories,setReadingMode,setLiveReading,getLiveReading} from './data.js';
-import {Globe,MIN_ZOOM,MAX_ZOOM} from './globe.js?v=aqi-weather-5';
+import {Globe,MIN_ZOOM,MAX_ZOOM} from './globe.js?v=terrain-colour-6';
 import {filterCities,nearestCity,loadPreferences,savePreferences,normalize} from './explorer.js';
 
 const $=id=>document.getElementById(id);

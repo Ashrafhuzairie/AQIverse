@@ -42,11 +42,15 @@ vec3 tempColor(float n){
 }
 void main(){
  vec3 normal=normalize(vView);
- vec3 color=texture2D(uTexture,vUV).rgb;
+ vec4 surface=texture2D(uTexture,vUV);
+ vec3 color=surface.rgb;
+ float land=smoothstep(.46,.82,surface.a);
  float light=max(dot(normal,normalize(vec3(-.55,.7,1.2))),0.);
- color*=.68+.50*light;
+ float luminance=dot(color,vec3(.2126,.7152,.0722));
+ color=mix(vec3(luminance),color,1.16);
+ color*=.64+.48*light;
  float glow=pow(1.-max(normal.z,0.),3.);
- color+=vec3(.10,.31,.46)*glow;
+ color+=mix(vec3(.055,.24,.39),vec3(.06,.16,.13),land)*glow;
  float gridX=abs(fract(vUV.x*24.+.5)-.5);
  float gridY=abs(fract(vUV.y*12.+.5)-.5);
  float line=1.-smoothstep(.004,.010,min(gridX,gridY));
@@ -65,22 +69,48 @@ void main(){
  }
  if(total>.001){color=mix(color,heat/max(total,.001),min(total*.33,.46)*uHeat*(.65+.35*light));}
  float spec=pow(max(dot(reflect(-normalize(vec3(-.55,.7,1.2)),normal),vec3(0.,0.,1.)),0.),25.);
- color+=vec3(.19,.37,.48)*spec*.30;
+ color+=vec3(.26,.49,.64)*spec*.38*(1.-land*.86);
  gl_FragColor=vec4(color,1.);
 }`;
 
 function createTexture(polygons){
- const atlas=document.createElement('canvas');atlas.width=2048;atlas.height=1024;
- const ctx=atlas.getContext('2d');
- const ocean=ctx.createLinearGradient(0,0,0,1024);ocean.addColorStop(0,'#174f86');ocean.addColorStop(.5,'#187bac');ocean.addColorStop(1,'#175d92');ctx.fillStyle=ocean;ctx.fillRect(0,0,2048,1024);
- const land=ctx.createLinearGradient(0,0,0,1024);land.addColorStop(0,'#c5e6e7');land.addColorStop(.2,'#98d6b3');land.addColorStop(.36,'#a8d4a0');land.addColorStop(.55,'#69c59d');land.addColorStop(.78,'#87d0ac');land.addColorStop(1,'#d3e9ed');
- ctx.fillStyle=land;ctx.strokeStyle='#e6ffea8c';ctx.lineWidth=1.0;
+ const width=2048,height=1024,atlas=document.createElement('canvas');atlas.width=width;atlas.height=height;
+ const ctx=atlas.getContext('2d'),layer=document.createElement('canvas'),mask=document.createElement('canvas');layer.width=mask.width=width;layer.height=mask.height=height;
+ const layerCtx=layer.getContext('2d'),maskCtx=mask.getContext('2d');
+ const trace=(target,polygon)=>{target.beginPath();polygon.forEach(([lon,lat],i)=>{const x=(lon+180)/360*width,y=(90-lat)/180*height;i?target.lineTo(x,y):target.moveTo(x,y);});target.closePath();};
+
+ const ocean=ctx.createLinearGradient(0,0,0,height);ocean.addColorStop(0,'#062e58');ocean.addColorStop(.18,'#07527d');ocean.addColorStop(.5,'#087daf');ocean.addColorStop(.82,'#075078');ocean.addColorStop(1,'#062b52');ctx.fillStyle=ocean;ctx.fillRect(0,0,width,height);
+ const seaLight=ctx.createRadialGradient(width*.54,height*.42,20,width*.54,height*.42,width*.55);seaLight.addColorStop(0,'#42b5c42b');seaLight.addColorStop(.58,'#117fa319');seaLight.addColorStop(1,'#031a3800');ctx.fillStyle=seaLight;ctx.fillRect(0,0,width,height);
+
+ maskCtx.fillStyle='#fff';
  for(const polygon of polygons){
-  ctx.beginPath();polygon.forEach(([lon,lat],i)=>{const x=(lon+180)/360*2048,y=(90-lat)/180*1024;i?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.closePath();ctx.fill();ctx.stroke();
+  trace(maskCtx,polygon);maskCtx.fill();
  }
- // A deterministic texture adds depth without pretending to be satellite imagery.
+
+ // Blur the land silhouette into the ocean before drawing terrain to suggest shallow coastal water.
+ layerCtx.fillStyle='#55d5c8';layerCtx.drawImage(mask,0,0);ctx.save();ctx.globalAlpha=.38;ctx.filter='blur(13px)';ctx.drawImage(layer,0,0);ctx.restore();layerCtx.clearRect(0,0,width,height);
+
+ const land=layerCtx.createLinearGradient(0,0,0,height);land.addColorStop(0,'#edf4ee');land.addColorStop(.12,'#9fbda0');land.addColorStop(.25,'#61975e');land.addColorStop(.42,'#3f914e');land.addColorStop(.5,'#318c4c');land.addColorStop(.63,'#4b9853');land.addColorStop(.82,'#789c70');land.addColorStop(1,'#eef3ed');layerCtx.fillStyle=land;layerCtx.fillRect(0,0,width,height);
+ const paintBiome=(lon,lat,rx,ry,color,opacity=1)=>{const x=(lon+180)/360*width,y=(90-lat)/180*height,sx=rx/360*width,sy=ry/180*height;layerCtx.save();layerCtx.translate(x,y);layerCtx.scale(sx,sy);const gradient=layerCtx.createRadialGradient(0,0,0,0,0,1);gradient.addColorStop(0,color);gradient.addColorStop(.68,color);gradient.addColorStop(1,'rgba(0,0,0,0)');layerCtx.globalAlpha=opacity;layerCtx.fillStyle=gradient;layerCtx.beginPath();layerCtx.arc(0,0,1,0,Math.PI*2);layerCtx.fill();layerCtx.restore();};
+
+ // Broad climate regions keep the stylisation geographic without borrowing satellite imagery.
+ for(const area of [[-63,-5,31,19,'#176a3d',.78],[23,0,18,13,'#1b7040',.8],[106,8,25,19,'#1d7544',.76],[-84,37,19,14,'#397e47',.54],[18,50,29,14,'#4d8650',.5],[80,20,16,15,'#438e47',.48],[111,28,19,12,'#397f43',.5]])paintBiome(...area);
+ for(const area of [[10,24,42,16,'#d4aa62',.96],[47,24,18,10,'#d1a25a',.94],[62,39,25,12,'#bba268',.76],[104,42,20,9,'#c4aa6b',.82],[134,-25,27,17,'#c89c54',.94],[22,-24,15,12,'#c09a5a',.78],[-70,-24,7,15,'#c49a5f',.84],[-111,31,14,10,'#c4a164',.72],[-69,-44,10,11,'#ad9568',.65]])paintBiome(...area);
+ for(const area of [[84,31,28,7,'#c9c8b0',.68],[-72,-18,7,42,'#9f8f68',.62],[-112,45,9,28,'#8d8969',.55],[38,8,8,17,'#9b8b61',.5]])paintBiome(...area);
+
+ // Deterministic fine variation gives terrain and water a tactile, topographic finish.
  let seed=42;const random=()=>{seed=(seed*1664525+1013904223)>>>0;return seed/4294967296;};
- for(let i=0;i<36000;i++){const x=random()*2048,y=random()*1024;ctx.fillStyle=i%2?'#d0f6ef06':'#07536410';ctx.fillRect(x,y,random()*3+1,random()*2+1);}
+ for(let i=0;i<28000;i++){const x=random()*width,y=random()*height;layerCtx.fillStyle=i%3?'#f4f1cf0a':'#082d2510';layerCtx.fillRect(x,y,random()*3.4+.6,random()*2.2+.5);}
+ layerCtx.globalCompositeOperation='destination-in';layerCtx.drawImage(mask,0,0);layerCtx.globalCompositeOperation='source-over';ctx.drawImage(layer,0,0);
+
+ ctx.strokeStyle='#e8f6d985';ctx.lineWidth=1;
+ for(const polygon of polygons){trace(ctx,polygon);ctx.stroke();}
+ for(let i=0;i<9000;i++){const x=random()*width,y=random()*height;ctx.fillStyle=i%2?'#b6eff408':'#031b3311';ctx.fillRect(x,y,random()*2.6+.4,random()*1.6+.4);}
+
+ // Preserve a land mask in alpha so the shader can restrict ocean specular highlights.
+ const pixels=ctx.getImageData(0,0,width,height),landPixels=maskCtx.getImageData(0,0,width,height).data;
+ for(let i=0;i<landPixels.length;i+=4)pixels.data[i+3]=landPixels[i+3]>24?255:76;
+ ctx.putImageData(pixels,0,0);
  return atlas;
 }
 function shader(gl,type,source){const s=gl.createShader(type);gl.shaderSource(s,source);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(s));return s;}
@@ -119,10 +149,10 @@ function makeCanvasFallback(canvas,polygons){
  const vectors=polygons.map(p=>p.map(([lon,lat])=>geoVector(lat,lon)));
  return {draw(state,l){
   const dpr=Math.min(devicePixelRatio||1,2);if(canvas.width!==Math.round(l.w*dpr)||canvas.height!==Math.round(l.h*dpr)){canvas.width=Math.round(l.w*dpr);canvas.height=Math.round(l.h*dpr);}ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,l.w,l.h);
-  const ocean=ctx.createRadialGradient(l.cx-l.r*.35,l.cy-l.r*.4,l.r*.05,l.cx,l.cy,l.r);ocean.addColorStop(0,'#218fbe');ocean.addColorStop(.75,'#196da2');ocean.addColorStop(1,'#184d84');ctx.fillStyle=ocean;ctx.beginPath();ctx.arc(l.cx,l.cy,l.r,0,Math.PI*2);ctx.fill();ctx.save();ctx.beginPath();ctx.arc(l.cx,l.cy,l.r,0,Math.PI*2);ctx.clip();
+  const ocean=ctx.createRadialGradient(l.cx-l.r*.35,l.cy-l.r*.4,l.r*.05,l.cx,l.cy,l.r);ocean.addColorStop(0,'#1598bb');ocean.addColorStop(.68,'#0874a3');ocean.addColorStop(1,'#062f5c');ctx.fillStyle=ocean;ctx.beginPath();ctx.arc(l.cx,l.cy,l.r,0,Math.PI*2);ctx.fill();ctx.save();ctx.beginPath();ctx.arc(l.cx,l.cy,l.r,0,Math.PI*2);ctx.clip();
   for(const poly of vectors){let prev=rotateVector(poly.at(-1),state.lon,state.lat);ctx.beginPath();let began=false;
    for(const v of poly){const cur=rotateVector(v,state.lon,state.lat);if(cur[2]>=0){if(prev[2]<0){const f=-prev[2]/(cur[2]-prev[2]);let x=prev[0]+(cur[0]-prev[0])*f,y=prev[1]+(cur[1]-prev[1])*f;const m=Math.hypot(x,y);x/=m;y/=m;ctx.moveTo(l.cx+x*l.r,l.cy-y*l.r);}else if(!began)ctx.moveTo(l.cx+cur[0]*l.r,l.cy-cur[1]*l.r);else ctx.lineTo(l.cx+cur[0]*l.r,l.cy-cur[1]*l.r);began=true;}else if(prev[2]>=0){const f=prev[2]/(prev[2]-cur[2]);let x=prev[0]+(cur[0]-prev[0])*f,y=prev[1]+(cur[1]-prev[1])*f;const m=Math.hypot(x,y);ctx.lineTo(l.cx+x/m*l.r,l.cy-y/m*l.r);}prev=cur;}
-   ctx.fillStyle='#86d0aa';ctx.strokeStyle='#e6ffea85';ctx.lineWidth=.75;ctx.fill();ctx.stroke();
+   ctx.fillStyle='#5f9e59';ctx.strokeStyle='#e8f6d985';ctx.lineWidth=.75;ctx.fill();ctx.stroke();
   }
   if(state.grid){ctx.strokeStyle='#d8f6ff2a';ctx.lineWidth=.6;for(let lat=-75;lat<=75;lat+=15){drawProjectedLine(ctx,l,state,Array.from({length:181},(_,i)=>geoVector(lat,i*2-180)));}for(let lon=-180;lon<180;lon+=15){drawProjectedLine(ctx,l,state,Array.from({length:91},(_,i)=>geoVector(i*2-90,lon)));}}
   if(state.heat)for(const c of cities){const v=rotateVector(geoVector(c.lat,c.lon),state.lon,state.lat);if(v[2]<0)continue;const r=reading(c,state.hour);if(!Number.isFinite(state.metric==='temp'?r.temp:r.aqi))continue;const color=state.metric==='temp'?temperatureColor(r.temp):r.color,x=l.cx+v[0]*l.r,y=l.cy-v[1]*l.r,g=ctx.createRadialGradient(x,y,0,x,y,l.r*.1);g.addColorStop(0,color+'65');g.addColorStop(1,color+'00');ctx.fillStyle=g;ctx.fillRect(x-l.r*.1,y-l.r*.1,l.r*.2,l.r*.2);}
